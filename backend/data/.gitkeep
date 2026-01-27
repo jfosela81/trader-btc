@@ -1,0 +1,2 @@
+# Este directorio almacena el estado local del bot
+# El archivo bot_state.json está en .gitignore

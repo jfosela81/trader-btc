@@ -1,0 +1,12 @@
+# Trading Bot Dependencies
+pandas>=2.1.0            # Data manipulation
+numpy>=1.26.0            # Numerical operations
+python-dotenv>=1.0.0     # Environment variables
+requests>=2.31.0         # HTTP requests (para APIs de Binance/CoinGecko)
+schedule>=1.2.0          # Job scheduling (local dev)
+
+# Database
+supabase>=2.3.0          # Supabase client
+
+# Nota: Usamos requests directamente para las APIs de exchanges
+# en lugar de ccxt para evitar problemas de compatibilidad con Python 3.9
