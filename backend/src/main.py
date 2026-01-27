@@ -130,9 +130,12 @@ def run_trading_cycle():
         # Mostrar estado del portfolio
         engine.print_summary(current_price)
         
-        # Guardar estado
+        # Guardar estado localmente
         print(f"\n💾 Guardando estado...")
         engine.save_state(str(STATE_FILE))
+        
+        # Guardar snapshot en Supabase
+        engine.save_snapshot_to_supabase(current_price)
         
         print(f"\n{'='*60}")
         print(f"✅ Ciclo completado exitosamente")

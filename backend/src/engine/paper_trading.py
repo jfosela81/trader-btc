@@ -14,6 +14,16 @@ from datetime import datetime
 from typing import List, Optional
 from enum import Enum
 import json
+import sys
+import os
+
+# Para imports del proyecto
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from data.supabase_client import get_supabase
+except ImportError:
+    get_supabase = None
 
 
 class TradeType(Enum):
@@ -84,17 +94,20 @@ class Portfolio:
 class PaperTradingEngine:
     """
     Motor de paper trading para simular operaciones.
+    Guarda trades en Supabase si está configurado.
     """
     
     def __init__(self, 
                  initial_usd: float = 1000.0,
                  fee_percent: float = 0.1,
-                 min_trade_usd: float = 10.0):
+                 min_trade_usd: float = 10.0,
+                 use_supabase: bool = True):
         """
         Args:
             initial_usd: Balance inicial en USD
             fee_percent: Comisión por trade (0.1 = 0.1%)
             min_trade_usd: Mínimo USD por operación
+            use_supabase: Si True, guarda trades en Supabase
         """
         self.portfolio = Portfolio(
             usd_balance=initial_usd,
@@ -110,6 +123,11 @@ class PaperTradingEngine:
         self.winning_trades = 0
         self.losing_trades = 0
         self.last_buy_price: Optional[float] = None
+        
+        # Supabase
+        self.supabase = None
+        if use_supabase and get_supabase is not None:
+            self.supabase = get_supabase()
     
     def buy(self, 
             price: float, 
@@ -175,6 +193,10 @@ class PaperTradingEngine:
         print(f"   Gastado: ${usd_amount:.2f} (fee: ${fee_usd:.2f})")
         print(f"   Recibido: {btc_amount:.8f} BTC")
         print(f"   Balance: ${self.portfolio.usd_balance:.2f} USD | {self.portfolio.btc_balance:.8f} BTC")
+        
+        # Guardar en Supabase
+        if self.supabase and self.supabase.is_connected:
+            self.supabase.save_trade(trade.to_dict())
         
         return trade
     
@@ -259,6 +281,10 @@ class PaperTradingEngine:
         print(f"   Recibido: ${usd_net:.2f} (fee: ${fee_usd:.2f}){pnl_trade}")
         print(f"   Balance: ${self.portfolio.usd_balance:.2f} USD | {self.portfolio.btc_balance:.8f} BTC")
         
+        # Guardar en Supabase
+        if self.supabase and self.supabase.is_connected:
+            self.supabase.save_trade(trade.to_dict())
+        
         self.last_buy_price = None
         return trade
     
@@ -298,6 +324,20 @@ class PaperTradingEngine:
         print(f"   Win rate: {stats['win_rate']:.1f}%")
         print(f"   Fees pagados: ${stats['total_fees_paid']:.2f}")
         print("=" * 50)
+    
+    def save_snapshot_to_supabase(self, current_price: float):
+        """Guarda un snapshot del portfolio en Supabase"""
+        if not self.supabase or not self.supabase.is_connected:
+            return False
+        
+        return self.supabase.save_portfolio_snapshot(
+            btc_price=current_price,
+            usd_balance=self.portfolio.usd_balance,
+            btc_balance=self.portfolio.btc_balance,
+            total_value_usd=self.portfolio.total_value_usd(current_price),
+            pnl_usd=self.portfolio.pnl_usd(current_price),
+            pnl_percent=self.portfolio.pnl_percent(current_price)
+        )
     
     def save_state(self, filepath: str):
         """Guarda el estado a un archivo JSON"""
