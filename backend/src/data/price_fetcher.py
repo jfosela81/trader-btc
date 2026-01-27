@@ -109,7 +109,8 @@ class PriceFetcher:
                                interval: str = "1h", 
                                limit: int = 100) -> List[OHLCV]:
         """
-        Obtiene precios históricos para análisis técnico desde Binance.
+        Obtiene precios históricos para análisis técnico.
+        Intenta Binance primero, si falla usa CoinGecko.
         
         Args:
             interval: Intervalo ('1m', '5m', '15m', '1h', '4h', '1d')
@@ -118,6 +119,15 @@ class PriceFetcher:
         Returns:
             Lista de objetos OHLCV
         """
+        try:
+            return self._get_historical_from_binance(interval, limit)
+        except Exception as e:
+            print(f"   ⚠️  Binance históricos falló: {e}")
+            print(f"   Usando CoinGecko como fallback...")
+            return self._get_historical_from_coingecko(interval, limit)
+    
+    def _get_historical_from_binance(self, interval: str, limit: int) -> List[OHLCV]:
+        """Obtiene históricos desde Binance"""
         url = f"{self.BINANCE_API}/klines"
         params = {
             "symbol": "BTCUSDT",
@@ -138,6 +148,49 @@ class PriceFetcher:
                 low=float(candle[3]),
                 close=float(candle[4]),
                 volume=float(candle[5])
+            ))
+        
+        return result
+    
+    def _get_historical_from_coingecko(self, interval: str, limit: int) -> List[OHLCV]:
+        """
+        Obtiene históricos desde CoinGecko.
+        CoinGecko no tiene OHLCV gratuito, así que usamos precios y simulamos.
+        """
+        # Mapear intervalo a días de historia
+        interval_to_days = {
+            "1m": 1,
+            "5m": 1,
+            "15m": 1,
+            "1h": 4,      # 100 horas ≈ 4 días
+            "4h": 17,     # 100 * 4h ≈ 17 días
+            "1d": 100,
+        }
+        days = interval_to_days.get(interval, 4)
+        
+        url = f"{self.COINGECKO_API}/coins/bitcoin/market_chart"
+        params = {
+            "vs_currency": "usd",
+            "days": days,
+        }
+        
+        response = requests.get(url, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+        
+        prices = data.get("prices", [])
+        
+        # CoinGecko devuelve [timestamp_ms, price]
+        # Convertimos a OHLCV (usando el mismo precio para OHLC ya que no tenemos velas reales)
+        result = []
+        for i, (ts_ms, price) in enumerate(prices[-limit:]):
+            result.append(OHLCV(
+                timestamp=datetime.fromtimestamp(ts_ms / 1000),
+                open=price,
+                high=price,
+                low=price,
+                close=price,
+                volume=0  # CoinGecko no da volumen por vela
             ))
         
         return result
