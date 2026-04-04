@@ -1,9 +1,9 @@
 name: BTC Trading Bot
 
 on:
-  # Ejecutar cada 15 minutos
+  # Ejecutar cada hora en punto
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '0 * * * *'
   
   # Permitir ejecución manual
   workflow_dispatch:
