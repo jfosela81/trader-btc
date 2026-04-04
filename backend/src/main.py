@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data.price_fetcher import PriceFetcher
+from data.supabase_client import get_supabase
 from strategies.sma_crossover import SMACrossoverStrategy
 from strategies.base import Signal
 from engine.paper_trading import PaperTradingEngine
@@ -55,13 +56,32 @@ def run_trading_cycle():
         fee_percent=trading_config.trading_fee_percent
     )
     
+    # Intentar restaurar estado (prioridad: archivo local > Supabase > fresco)
+    state_restored = False
+    
+    # 1. Intentar desde archivo local
     if STATE_FILE.exists():
         try:
             engine.load_state(str(STATE_FILE))
+            state_restored = True
         except Exception as e:
-            print(f"⚠️  No se pudo cargar estado anterior: {e}")
-            print(f"   Iniciando con balance fresco: ${trading_config.initial_balance_usd}")
-    else:
+            print(f"⚠️  No se pudo cargar estado local: {e}")
+    
+    # 2. Si no hay archivo local, intentar desde Supabase
+    if not state_restored:
+        supabase = get_supabase()
+        if supabase.is_connected:
+            latest = supabase.get_latest_portfolio()
+            if latest:
+                print(f"📂 Restaurando estado desde Supabase...")
+                engine.portfolio.usd_balance = float(latest['usd_balance'])
+                engine.portfolio.btc_balance = float(latest['btc_balance'])
+                print(f"   USD: ${engine.portfolio.usd_balance:,.2f}")
+                print(f"   BTC: {engine.portfolio.btc_balance:.8f}")
+                state_restored = True
+    
+    # 3. Si no se pudo restaurar, empezar fresco
+    if not state_restored:
         print(f"💰 Balance inicial: ${trading_config.initial_balance_usd:,.2f}")
     
     # Obtener precio actual
