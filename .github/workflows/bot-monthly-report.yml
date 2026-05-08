@@ -1,0 +1,79 @@
+name: BTC Trader — Monthly Report
+
+on:
+  schedule:
+    # Primer día de cada mes a las 08:00 UTC
+    # (1 hora antes que CongressFlows, igual que Cava Trader va 1h antes)
+    - cron: '0 8 1 * *'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: 'Mes a reportar (YYYY-MM). Vacío = mes anterior.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write  # necesario para hacer commit del .md al repo
+
+jobs:
+  monthly-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install supabase requests
+
+      - name: Generate monthly report
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          INITIAL_BALANCE_USD: ${{ vars.INITIAL_BALANCE_USD || '1000' }}
+        run: |
+          MONTH="${{ github.event.inputs.month }}"
+          if [ -n "$MONTH" ]; then
+            python scripts/generate_monthly_report.py "$MONTH"
+          else
+            python scripts/generate_monthly_report.py
+          fi
+
+      - name: Get report month
+        id: get_month
+        run: |
+          MONTH=$(python3 -c "
+          import sys, os
+          from datetime import date, timedelta
+          m = '${{ github.event.inputs.month }}'
+          if m:
+              print(m)
+          else:
+              today = date.today()
+              prev = (today.replace(day=1) - timedelta(days=1))
+              print(prev.strftime('%Y-%m'))
+          ")
+          echo "REPORT_MONTH=$MONTH" >> $GITHUB_ENV
+
+      - name: Commit and push report
+        run: |
+          git config user.name  "BTC Trader Bot"
+          git config user.email "bot@btc-trader.noreply"
+          git add reports/
+          git diff --staged --quiet || git commit -m "report: informe mensual ${{ env.REPORT_MONTH }}"
+          git push
+
+      - name: Summary
+        run: |
+          echo "✅ Informe mensual generado:"
+          echo "   → GitHub:  reports/${{ env.REPORT_MONTH }}.md"
+          echo "   → Latest:  reports/latest.md"
+          echo "   → URL fija: https://raw.githubusercontent.com/jfosela81/btc-trader/main/reports/latest.md"
+          echo "   → Mes:      https://raw.githubusercontent.com/jfosela81/btc-trader/main/reports/${{ env.REPORT_MONTH }}.md"
