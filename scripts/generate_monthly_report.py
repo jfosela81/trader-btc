@@ -5,8 +5,11 @@ Lee los datos directamente de Supabase (trades + portfolio_snapshots).
 Salida: reports/YYYY-MM.md  +  reports/latest.md
 
 Uso:
-    python generate_monthly_report.py [YYYY-MM]
-    Si no se pasa mes, usa el mes anterior al día en que se ejecuta.
+    python generate_monthly_report.py [YYYY-MM] [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+
+    YYYY-MM          Mes a reportar (por defecto: mes anterior al día actual)
+    --start YYYY-MM-DD  Fecha de inicio personalizada (informe parcial)
+    --end   YYYY-MM-DD  Fecha de fin personalizada (informe parcial)
 """
 
 import os
@@ -61,11 +64,16 @@ def get_supabase_client():
     return create_client(url, key)
 
 
-def get_trades_for_month(client, year: int, month: int) -> list:
-    """Devuelve todos los trades del mes indicado."""
-    start = f"{year:04d}-{month:02d}-01T00:00:00"
-    last_day = monthrange(year, month)[1]
-    end = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59"
+def get_trades_for_month(client, year: int, month: int,
+                         start_date: Optional[str] = None,
+                         end_date: Optional[str] = None) -> list:
+    """Devuelve todos los trades del período indicado."""
+    start = start_date or f"{year:04d}-{month:02d}-01T00:00:00"
+    if end_date:
+        end = end_date if "T" in end_date else end_date + "T23:59:59"
+    else:
+        last_day = monthrange(year, month)[1]
+        end = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59"
     try:
         result = (
             client.table("trades")
@@ -81,11 +89,16 @@ def get_trades_for_month(client, year: int, month: int) -> list:
         return []
 
 
-def get_snapshots_for_month(client, year: int, month: int) -> list:
-    """Devuelve todos los portfolio_snapshots del mes indicado."""
-    start = f"{year:04d}-{month:02d}-01T00:00:00"
-    last_day = monthrange(year, month)[1]
-    end = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59"
+def get_snapshots_for_month(client, year: int, month: int,
+                             start_date: Optional[str] = None,
+                             end_date: Optional[str] = None) -> list:
+    """Devuelve todos los portfolio_snapshots del período indicado."""
+    start = start_date or f"{year:04d}-{month:02d}-01T00:00:00"
+    if end_date:
+        end = end_date if "T" in end_date else end_date + "T23:59:59"
+    else:
+        last_day = monthrange(year, month)[1]
+        end = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59"
     try:
         result = (
             client.table("portfolio_snapshots")
@@ -284,10 +297,19 @@ def build_equity_curve(all_snapshots: list, report_year: int, report_month: int)
 # ─── Generación del Markdown ───────────────────────────────────────────────────
 
 def generate_markdown(metrics: dict, equity_curve: list, month: str,
-                      btc_start: Optional[float], btc_end: Optional[float]) -> str:
+                      btc_start: Optional[float], btc_end: Optional[float],
+                      custom_start: Optional[str] = None,
+                      custom_end: Optional[str] = None) -> str:
     dt = datetime.strptime(month + "-01", "%Y-%m-%d")
     last_day = monthrange(dt.year, dt.month)[1]
-    period_str = f"{month}-01 → {month}-{last_day:02d}"
+
+    if custom_start and custom_end:
+        start_d = datetime.strptime(custom_start, "%Y-%m-%d")
+        end_d   = datetime.strptime(custom_end,   "%Y-%m-%d")
+        delta_days = (end_d - start_d).days + 1
+        period_str = f"{custom_start} → {custom_end} ({delta_days} días) ⚠️ Informe parcial"
+    else:
+        period_str = f"{month}-01 → {month}-{last_day:02d}"
 
     # Comparativa Buy & Hold
     if btc_start and btc_end and btc_start > 0:
@@ -331,11 +353,15 @@ def generate_markdown(metrics: dict, equity_curve: list, month: str,
     pf_val = metrics["profit_factor"]
     pf_str = f"{pf_val:.2f}" if pf_val != float("inf") else "∞"
 
+    partial_note = ""
+    if custom_start and custom_end:
+        partial_note = f"\n> ⚠️ **Informe parcial** — el bot arrancó el {custom_start} (no el día 1 del mes)."
+
     lines = [
         f"# BTC Trader — Informe Mensual {month}",
         f"",
-        f"> Generado automáticamente el 1 de {dt.strftime('%B %Y')}.",
-        f"> Paper trading · Estrategia SMA Crossover · BTC/USD.",
+        f"> Generado el {datetime.now().strftime('%Y-%m-%d')}.",
+        f"> Paper trading · Estrategia SMA Crossover · BTC/USD.{partial_note}",
         f"",
         f"---",
         f"",
@@ -402,12 +428,18 @@ def generate_markdown(metrics: dict, equity_curve: list, month: str,
 # ─── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Genera informe mensual BTC Trader")
+    parser.add_argument("month", nargs="?", help="Mes a reportar: YYYY-MM (por defecto: mes anterior)")
+    parser.add_argument("--start", help="Fecha de inicio personalizada YYYY-MM-DD (informe parcial)")
+    parser.add_argument("--end",   help="Fecha de fin personalizada YYYY-MM-DD (informe parcial)")
+    args = parser.parse_args()
+
     # Determinar mes del informe
-    if len(sys.argv) >= 2:
-        month_str = sys.argv[1]  # YYYY-MM
+    if args.month:
+        month_str = args.month
     else:
         today = date.today()
-        # El script corre el día 1 del mes actual → reporta el mes anterior
         first_of_this_month = today.replace(day=1)
         prev_month_end = first_of_this_month - timedelta(days=1)
         month_str = prev_month_end.strftime("%Y-%m")
@@ -420,19 +452,31 @@ def main():
 
     report_year  = report_dt.year
     report_month = report_dt.month
+
+    # Fechas de inicio/fin para el filtro de datos
+    custom_start = args.start  # YYYY-MM-DD o None
+    custom_end   = args.end    # YYYY-MM-DD o None
+
+    start_filter = (custom_start + "T00:00:00") if custom_start else None
+    end_filter   = (custom_end   + "T23:59:59") if custom_end   else None
+
     print(f"📅 Generando informe para: {month_str}")
+    if custom_start or custom_end:
+        print(f"   Rango parcial: {custom_start or '(inicio mes)'} → {custom_end or '(fin mes)'}")
 
     # Conectar a Supabase
     client = get_supabase_client()
     print("✅ Conectado a Supabase")
 
     # Obtener datos
-    print("📊 Obteniendo trades del mes...")
-    trades = get_trades_for_month(client, report_year, report_month)
+    print("📊 Obteniendo trades del período...")
+    trades = get_trades_for_month(client, report_year, report_month,
+                                  start_filter, end_filter)
     print(f"   → {len(trades)} trades encontrados")
 
-    print("📈 Obteniendo snapshots del mes...")
-    snapshots = get_snapshots_for_month(client, report_year, report_month)
+    print("📈 Obteniendo snapshots del período...")
+    snapshots = get_snapshots_for_month(client, report_year, report_month,
+                                        start_filter, end_filter)
     print(f"   → {len(snapshots)} snapshots encontrados")
 
     print("📉 Obteniendo historial de equity...")
@@ -444,29 +488,37 @@ def main():
     # Calcular métricas
     metrics = calculate_metrics(trades, snapshots, initial_usd)
 
-    # Precio BTC al inicio y fin del mes para comparativa
-    first_day = date(report_year, report_month, 1)
-    last_day_num = monthrange(report_year, report_month)[1]
-    last_day = date(report_year, report_month, last_day_num)
+    # Precio BTC al inicio y fin del período para comparativa
+    if custom_start:
+        first_day = datetime.strptime(custom_start, "%Y-%m-%d").date()
+    else:
+        first_day = date(report_year, report_month, 1)
+
+    if custom_end:
+        last_day = datetime.strptime(custom_end, "%Y-%m-%d").date()
+    else:
+        last_day_num = monthrange(report_year, report_month)[1]
+        last_day = date(report_year, report_month, last_day_num)
 
     print("💱 Obteniendo precios BTC para comparativa...")
     btc_start = get_btc_price_at(first_day)
     btc_end   = get_btc_price_at(last_day)
 
-    # Si tenemos snapshots, usar esos precios como fallback
+    # Fallback: usar precio de los propios snapshots
     if btc_start is None and snapshots:
         btc_start = float(snapshots[0].get("btc_price", 0)) or None
     if btc_end is None and snapshots:
         btc_end = float(snapshots[-1].get("btc_price", 0)) or None
 
-    print(f"   BTC inicio de mes: {'$' + f'{btc_start:,.0f}' if btc_start else 'N/D'}")
-    print(f"   BTC fin de mes:    {'$' + f'{btc_end:,.0f}' if btc_end else 'N/D'}")
+    print(f"   BTC inicio período: {'$' + f'{btc_start:,.0f}' if btc_start else 'N/D'}")
+    print(f"   BTC fin período:    {'$' + f'{btc_end:,.0f}' if btc_end else 'N/D'}")
 
     # Equity curve
     equity_curve = build_equity_curve(all_snaps, report_year, report_month)
 
     # Generar Markdown
-    content = generate_markdown(metrics, equity_curve, month_str, btc_start, btc_end)
+    content = generate_markdown(metrics, equity_curve, month_str, btc_start, btc_end,
+                                 custom_start, custom_end)
 
     # Guardar archivos
     reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reports")
